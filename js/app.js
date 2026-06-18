@@ -138,6 +138,9 @@ function clearCache() {
   document.getElementById('cacheBar').style.display   = 'none';
   document.getElementById('result').style.display     = 'none';
   document.getElementById('emptyEl').style.display    = 'block';
+  // 칩도 초기화 (분석 전 빈 상태)
+  const chips = document.getElementById('chips');
+  if (chips) { chips.innerHTML = ''; chips.style.opacity = '0'; }
   showToast('캐시가 초기화되었습니다.');
 }
 
