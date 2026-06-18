@@ -1,20 +1,44 @@
 /**
- * youtube-api.js  v3.1  — 트렌딩 역추출 전용 (씨드 키워드 완전 제거)
+ * youtube-api.js  v3.2
+ *
+ * ⚠ 변경 이유:
+ *   2025년 7월 21일부터 videos.list?chart=mostPopular 가
+ *   음악·영화·게임 차트만 반환하도록 바뀌어 일반 Shorts가 거의 포함되지 않음.
+ *   → search.list로 최신 인기 Shorts를 직접 수집하는 방식으로 전환.
  *
  * 수집 흐름:
- *   STEP 1. 한국 트렌딩 Shorts 200개 수집           → ~2 units
- *   STEP 2. 제목·태그에서 키워드 자동 역추출         → 0 units
- *   STEP 3. 역추출 키워드 상위 20개로 추가 검색      → ~2,000 units
- *   STEP 4. 통계 보강 (미보유 영상만 배치 조회)      → ~10 units
+ *   STEP 1. 카테고리별 인기 Shorts 수집 (조회수순, 최근 7일)  → ~800 units
+ *   STEP 2. 제목·태그에서 키워드 자동 역추출                  → 0 units
+ *   STEP 3. 역추출 키워드 상위 12개로 추가 검색               → ~1,200 units
+ *   STEP 4. 통계 보강 (미보유 영상 배치 조회)                  → ~10 units
  *
- * 총 쿼터: ~2,012 units / 1일 최대 약 4~5회
- * 키워드 출처: 100% 실시간 트렌딩 역추출 (사전 정의 없음)
+ * 총 쿼터: ~2,010 units / 1일 약 4~5회 분석 가능
+ * 키워드 출처: 100% 실시간 역추출 (사전 정의 없음)
  */
 
 const YT_BASE = 'https://www.googleapis.com/youtube/v3';
 
 /* ─────────────────────────────────────────────────────────
-   제목 파싱 불용어 — 변별력 없는 단어 필터
+   수집용 검색 쿼리 세트
+   — 특정 키워드 없이 카테고리·시간 필터만으로 인기 Shorts 수집
+   — 역추출의 재료가 될 '다양한 실제 인기 영상' 확보가 목적
+───────────────────────────────────────────────────────── */
+const SEED_QUERIES = [
+  // 카테고리 없이 순수 인기순 Shorts (가장 광범위)
+  { q: '#Shorts',         label: 'general'  },
+  { q: '쇼츠',            label: 'general2' },
+  // 주요 콘텐츠 카테고리 (넓게 커버)
+  { q: '챌린지 Shorts',   label: 'challenge' },
+  { q: '먹방 Shorts',     label: 'food'      },
+  { q: '일상 Shorts',     label: 'daily'     },
+  { q: '뷰티 Shorts',     label: 'beauty'    },
+  { q: '운동 Shorts',     label: 'fitness'   },
+  { q: '정보 Shorts',     label: 'info'      },
+  { q: 'ASMR Shorts',    label: 'asmr'      },
+];
+
+/* ─────────────────────────────────────────────────────────
+   불용어 — 변별력 없는 단어 필터
 ───────────────────────────────────────────────────────── */
 const STOPWORDS = new Set([
   // 조사·어미
@@ -38,28 +62,27 @@ const STOPWORDS = new Set([
 ═══════════════════════════════════════════════════════ */
 export async function fetchTrendData(apiKey, onProgress = () => {}) {
 
-  // ── STEP 1: 트렌딩 Shorts 수집 ──────────────────────────
+  // ── STEP 1: 카테고리별 인기 Shorts 수집 ──────────────
   onProgress(3);
-  const trendingVideos = await fetchTrendingShorts(apiKey);
-  // 트렌딩 수집 실패 시 여기서 throw → 에러 메시지 명확하게 전달
-  onProgress(14);
+  const seedVideos = await fetchPopularShorts(apiKey, onProgress);
+  onProgress(35);
 
-  // ── STEP 2: 트렌딩 제목에서 키워드 역추출 ───────────────
-  const keywords = extractKeywords(trendingVideos);
-  onProgress(18);
+  // ── STEP 2: 제목에서 키워드 역추출 ───────────────────
+  const keywords = extractKeywords(seedVideos);
+  onProgress(40);
 
   if (keywords.length === 0) {
     throw new Error(
-      '트렌딩 영상에서 키워드를 추출하지 못했습니다.\n' +
-      '트렌딩 데이터가 충분하지 않습니다. 잠시 후 다시 시도해주세요.'
+      '인기 Shorts 영상에서 키워드를 추출하지 못했습니다.\n' +
+      '잠시 후 다시 시도해주세요.'
     );
   }
 
-  // 상위 20개만 사용 (쿼터 ~2,000 units)
-  const topKeywords = keywords.slice(0, 20);
-  onProgress(20);
+  // 역추출 상위 12개 키워드로만 추가 검색
+  const topKeywords = keywords.slice(0, 12);
+  onProgress(42);
 
-  // ── STEP 3: 역추출 키워드로 Shorts 검색 ─────────────────
+  // ── STEP 3: 역추출 키워드로 추가 검색 ────────────────
   const searchedVideos = [];
   const errs = [];
   for (let i = 0; i < topKeywords.length; i++) {
@@ -69,20 +92,18 @@ export async function fetchTrendData(apiKey, onProgress = () => {}) {
     } catch (e) {
       errs.push(e.message);
     }
-    onProgress(20 + Math.round((i + 1) / topKeywords.length * 50));
+    onProgress(42 + Math.round((i + 1) / topKeywords.length * 30));
     await sleep(110);
   }
 
-  // 검색 전체 실패 시 에러 전달
   if (errs.length && searchedVideos.length === 0) throw new Error(errs[0]);
 
-  // 트렌딩 영상 source 태그 추가
-  trendingVideos.forEach(v => { v.keyword = v.keyword || '_trending_'; });
+  // seedVideos + searchedVideos 합산, 중복 제거
+  seedVideos.forEach(v => { if (!v.keyword) v.keyword = v.seedLabel || '_seed_'; });
+  const combined = devidById([...seedVideos, ...searchedVideos]);
+  onProgress(74);
 
-  const combined = devidById([...trendingVideos, ...searchedVideos]);
-  onProgress(72);
-
-  // ── STEP 4: 통계 보강 (트렌딩은 이미 보유, 검색 영상만 조회) ──
+  // ── STEP 4: 통계 보강 ─────────────────────────────────
   const enriched = await enrichStats(apiKey, combined, onProgress);
   onProgress(97);
 
@@ -90,59 +111,55 @@ export async function fetchTrendData(apiKey, onProgress = () => {}) {
 }
 
 /* ═══════════════════════════════════════════════════════
-   STEP 1 — 트렌딩 Shorts 수집
-   videos.list?chart=mostPopular (한국, 전체 카테고리)
-   → Shorts 필터: duration ≤ 60초
+   STEP 1 — 카테고리별 인기 Shorts 수집
+   search.list + order=viewCount + publishedAfter 7일
 ═══════════════════════════════════════════════════════ */
-async function fetchTrendingShorts(apiKey) {
+async function fetchPopularShorts(apiKey, onProgress) {
+  const after = new Date(Date.now() - 7 * 86400000).toISOString();
   const results = [];
-  let pageToken = null;
 
-  // 4페이지 × 50개 = 최대 200개 순회
-  for (let page = 0; page < 4; page++) {
-    const params = {
-      key: apiKey,
-      part: 'snippet,statistics,contentDetails',
-      chart: 'mostPopular',
-      regionCode: 'KR',
-      maxResults: 50,
-    };
-    if (pageToken) params.pageToken = pageToken;
+  for (let i = 0; i < SEED_QUERIES.length; i++) {
+    const { q, label } = SEED_QUERIES[i];
+    try {
+      const data = await ytFetch(ytUrl('/search', {
+        key: apiKey,
+        part: 'snippet',
+        q,
+        type: 'video',
+        videoDuration: 'short',
+        regionCode: 'KR',
+        relevanceLanguage: 'ko',
+        order: 'viewCount',        // 조회수 높은 순
+        publishedAfter: after,
+        maxResults: 50,
+      }));
 
-    const data = await ytFetch(ytUrl('/videos', params));
-
-    for (const it of (data.items || [])) {
-      if (!isShorts(it.contentDetails?.duration)) continue;
-      results.push({
-        videoId:      it.id,
-        title:        it.snippet.title,
-        channelTitle: it.snippet.channelTitle,
-        publishedAt:  it.snippet.publishedAt,
-        thumbnail:    it.snippet.thumbnails?.medium?.url || '',
-        tags:         it.snippet.tags || [],
-        viewCount:    parseInt(it.statistics?.viewCount    || 0),
-        likeCount:    parseInt(it.statistics?.likeCount    || 0),
-        commentCount: parseInt(it.statistics?.commentCount || 0),
-        duration:     it.contentDetails?.duration || '',
-        source:       'trending',
-      });
+      for (const it of (data.items || [])) {
+        results.push({
+          videoId:      it.id.videoId,
+          title:        it.snippet.title,
+          channelTitle: it.snippet.channelTitle,
+          publishedAt:  it.snippet.publishedAt,
+          thumbnail:    it.snippet.thumbnails?.medium?.url || '',
+          seedLabel:    label,
+          source:       'seed',
+        });
+      }
+    } catch (e) {
+      // 개별 쿼리 실패는 무시하고 계속
+      console.warn(`[벌툰트렌드] ${q} 수집 실패:`, e.message);
     }
 
-    pageToken = data.nextPageToken;
-    if (!pageToken) break;
-    await sleep(80);
+    onProgress(3 + Math.round((i + 1) / SEED_QUERIES.length * 30));
+    await sleep(110);
   }
 
   return results;
 }
 
 /* ═══════════════════════════════════════════════════════
-   STEP 2 — 트렌딩 제목·태그에서 키워드 역추출
-   알고리즘:
-     1) 제목을 단어 단위로 토큰화
-     2) 불용어 제거
-     3) 등장 빈도 × 조회수 로그 가중치로 정렬
-     4) 최소 3개 영상에 등장한 키워드만 유효
+   STEP 2 — 제목에서 키워드 역추출
+   빈도 × 조회수 가중치 정렬 → 최소 3개 영상 등장 시 유효
 ═══════════════════════════════════════════════════════ */
 function extractKeywords(videos) {
   if (!videos.length) return [];
@@ -150,21 +167,20 @@ function extractKeywords(videos) {
   const freq = {};
 
   for (const v of videos) {
-    // 조회수 로그 가중치 (조회수 많을수록 더 높은 가중치)
-    const weight = Math.log10(Math.max(v.viewCount || 1, 10));
+    const weight = Math.log10(Math.max(v.viewCount || 100, 10));
+    const tokens = [
+      ...tokenize(v.title),
+      ...(v.tags || []).flatMap(t => tokenize(t)),
+    ];
 
-    const titleTokens = tokenize(v.title);
-    const tagTokens   = (v.tags || []).flatMap(t => tokenize(t));
-    const tokens      = [...new Set([...titleTokens, ...tagTokens])];
-
-    for (const tok of tokens) {
+    for (const tok of [...new Set(tokens)]) {
       if (!freq[tok]) freq[tok] = { count: 0, score: 0 };
       freq[tok].count++;
       freq[tok].score += weight;
     }
   }
 
-  // 최소 3개 영상에서 등장한 키워드만 유효 트렌드로 인정
+  // 최소 3개 영상에 등장한 키워드만 유효
   return Object.entries(freq)
     .filter(([, v]) => v.count >= 3)
     .sort((a, b) => b[1].score - a[1].score)
@@ -172,10 +188,8 @@ function extractKeywords(videos) {
 }
 
 /**
- * 텍스트 → 의미 있는 키워드 토큰 배열
- * - 한국어 2~8자 단어
- * - 영문 2자 이상 (ASMR, DIY 등)
- * - 2단어 조합(바이그램): "타이머 챌린지", "여름 패션" 등
+ * 텍스트 → 키워드 토큰 배열
+ * 한국어 2~8자, 영문 2자 이상, 2단어 바이그램
  */
 function tokenize(text) {
   if (!text) return [];
@@ -190,7 +204,6 @@ function tokenize(text) {
 
   const tokens = [];
 
-  // 단어 토큰
   const koWords = clean.match(/[가-힣]{2,8}/g) || [];
   const enWords = clean.match(/[a-zA-Z]{2,}/g)  || [];
   for (const w of [...koWords, ...enWords]) {
@@ -206,7 +219,8 @@ function tokenize(text) {
     const len = bigram.replace(/\s/g, '').length;
     const hasKo = /[가-힣]/.test(bigram);
     if (hasKo && len >= 4 && len <= 14
-        && !STOPWORDS.has(a.toLowerCase()) && !STOPWORDS.has(b.toLowerCase())) {
+        && !STOPWORDS.has(a.toLowerCase())
+        && !STOPWORDS.has(b.toLowerCase())) {
       tokens.push(bigram);
     }
   }
@@ -241,11 +255,9 @@ async function searchShorts(apiKey, kw) {
 ═══════════════════════════════════════════════════════ */
 async function enrichStats(apiKey, videos, onProg) {
   const map = {};
-  // 트렌딩 영상은 이미 통계 보유 → 맵에 등록
   videos.filter(v => v.viewCount !== undefined)
         .forEach(v => { map[v.videoId] = v; });
 
-  // 미보유 영상만 배치 조회
   const ids = [...new Set(
     videos.filter(v => v.viewCount === undefined).map(v => v.videoId)
   )];
@@ -264,7 +276,7 @@ async function enrichStats(apiKey, videos, onProg) {
         duration:     it.contentDetails?.duration || '',
       };
     }
-    onProg(72 + Math.round((i + 1) / Math.max(batches.length, 1) * 23));
+    onProg(74 + Math.round((i + 1) / Math.max(batches.length, 1) * 21));
     await sleep(80);
   }
 
