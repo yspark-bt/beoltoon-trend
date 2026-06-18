@@ -164,12 +164,20 @@ async function fetchPopularShorts(apiKey, onProgress) {
     await sleep(110);
   }
 
-  return results;
+  // 한국어 제목 영상만 반환 (해외 채널 영상 제거)
+  const koOnly = results.filter(v => hasKorean(v.title));
+  return koOnly;
+}
+
+/* 제목에 한국어(가-힣)가 1글자 이상 포함되어 있는지 확인 */
+function hasKorean(text) {
+  return /[가-힣]/.test(text || '');
 }
 
 /* ═══════════════════════════════════════════════════════
    STEP 2 — 제목에서 키워드 역추출
-   빈도 × 조회수 가중치 정렬 → 최소 3개 영상 등장 시 유효
+   한국어 제목 영상만 대상 → 빈도 × 조회수 가중치 정렬
+   → 최소 3개 영상 등장 시 유효
 ═══════════════════════════════════════════════════════ */
 function extractKeywords(videos) {
   if (!videos.length) return [];
@@ -250,14 +258,16 @@ async function searchShorts(apiKey, kw) {
     relevanceLanguage: 'ko', order: 'relevance',
     publishedAfter: after, maxResults: 50,
   }));
-  return (data.items || []).map(it => ({
-    videoId:      it.id.videoId,
-    title:        it.snippet.title,
-    channelTitle: it.snippet.channelTitle,
-    publishedAt:  it.snippet.publishedAt,
-    thumbnail:    it.snippet.thumbnails?.medium?.url || '',
-    source:       'search',
-  }));
+  return (data.items || [])
+    .filter(it => hasKorean(it.snippet.title))   // 한국어 제목 영상만
+    .map(it => ({
+      videoId:      it.id.videoId,
+      title:        it.snippet.title,
+      channelTitle: it.snippet.channelTitle,
+      publishedAt:  it.snippet.publishedAt,
+      thumbnail:    it.snippet.thumbnails?.medium?.url || '',
+      source:       'search',
+    }));
 }
 
 /* ═══════════════════════════════════════════════════════
