@@ -8,8 +8,17 @@ import { fmt } from './analyzer.js';
 
 /* ── 전체 보고서 렌더 ── */
 export function renderReport(data) {
+  // 히어로: 주차 + 분석 영상 수
   document.getElementById('heroSub').innerHTML =
     `<strong>${data.week_label}</strong> — 영상 <strong>${fmt(data.totalVideosAnalyzed)}</strong>개 분석 완료`;
+
+  // 히어로 서브타이틀: "A·B·C가 이번 주 쇼츠를 이끌었습니다"
+  const heroTagline = document.getElementById('heroTagline');
+  if (heroTagline && data.heroSubtitle) {
+    heroTagline.textContent = data.heroSubtitle;
+    heroTagline.style.display = 'block';
+  }
+
   document.getElementById('weekLbl').textContent = data.week_label;
   document.getElementById('genAt').textContent   = data.generatedAt + ' 생성';
 
