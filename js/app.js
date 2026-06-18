@@ -9,11 +9,23 @@ import { renderReport, setLoadingStep, setProgressBar } from './renderer.js';
 const STORAGE_KEY = 'beoltoon_yt_api_key';
 
 // ─────────────────────────────────────────────
+// 기본 API Key (없을 때 자동 세팅)
+// ※ Public 레포 노출 위험 → Google Cloud Console에서
+//   HTTP 리퍼러를 https://yspark-bt.github.io/* 로 제한 권장
+// ─────────────────────────────────────────────
+const DEFAULT_API_KEY = 'AIzaSyC4nFXaz4SBYQx8w44HGrKx-BJdKyEBN-0';
+
+// ─────────────────────────────────────────────
 // 초기화
 // ─────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
-  // 저장된 API Key 복원
+  // localStorage에 키가 없으면 기본 키를 자동 저장
+  if (!localStorage.getItem(STORAGE_KEY)) {
+    localStorage.setItem(STORAGE_KEY, DEFAULT_API_KEY);
+  }
+
+  // 저장된 API Key 복원 (input에 표시 + 저장됨 뱃지)
   const saved = localStorage.getItem(STORAGE_KEY);
   if (saved) {
     document.getElementById('apiKeyInput').value = saved;
@@ -88,7 +100,9 @@ async function runGenerate() {
 // ─────────────────────────────────────────────
 
 function getApiKey() {
-  return document.getElementById('apiKeyInput').value.trim() || localStorage.getItem(STORAGE_KEY) || '';
+  return document.getElementById('apiKeyInput').value.trim()
+    || localStorage.getItem(STORAGE_KEY)
+    || DEFAULT_API_KEY;
 }
 
 function saveKey() {
