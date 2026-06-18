@@ -35,10 +35,21 @@ export function renderReport(data) {
     document.getElementById('result').scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
 }
 
-/* ── 키워드 칩 ── */
+/* ── 키워드 칩 — 분석된 실제 키워드로 교체 + 페이드인 ── */
 function renderChips(keywords) {
-  document.getElementById('chips').innerHTML =
-    keywords.slice(0, 12).map(k => `<span class="chip">${esc(k)}</span>`).join('');
+  const el = document.getElementById('chips');
+  if (!el) return;
+
+  // 역추출 키워드 최대 15개 표시
+  el.innerHTML = keywords.slice(0, 15).map(k =>
+    `<span class="chip">${esc(k)}</span>`
+  ).join('');
+
+  // 페이드인
+  el.style.opacity = '0';
+  requestAnimationFrame(() => {
+    el.style.opacity = '1';
+  });
 }
 
 /* ── TOP 15 아코디언 ── */
