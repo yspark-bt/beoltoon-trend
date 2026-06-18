@@ -11,19 +11,46 @@
  */
 
 export function analyzeAndRank(videos) {
-  /* 1) 키워드 집계 */
+  /* 1) 키워드 집계
+   * - 트렌딩 역추출 영상(source='trending')은 제목에서 키워드를 다시 뽑아 분배
+   * - 검색 영상은 검색 키워드로 집계
+   */
   const kwMap = {};
-  for (const v of videos) {
-    const k = normalizeKw(v.keyword);
+
+  function addToMap(key, video) {
+    const k = normalizeKw(key);
+    if (!k) return;
     if (!kwMap[k]) kwMap[k] = { label: k, videos: [], totalViews: 0, totalLikes: 0, totalComments: 0 };
-    kwMap[k].videos.push(v);
-    kwMap[k].totalViews    += v.viewCount    || 0;
-    kwMap[k].totalLikes    += v.likeCount    || 0;
-    kwMap[k].totalComments += v.commentCount || 0;
+    // 동일 영상 중복 방지
+    if (!kwMap[k].videos.find(e => e.videoId === video.videoId)) {
+      kwMap[k].videos.push(video);
+      kwMap[k].totalViews    += video.viewCount    || 0;
+      kwMap[k].totalLikes    += video.likeCount    || 0;
+      kwMap[k].totalComments += video.commentCount || 0;
+    }
   }
 
-  /* 2) 점수 계산 (영상 수 ≥ 3개 이상만 유효 트렌드로 인정) */
-  const entries = Object.values(kwMap).filter(k => k.videos.length >= 3);
+  for (const v of videos) {
+    if (v.source === 'trending' || v.keyword === '_trending_') {
+      // 트렌딩 영상: 제목에서 2~8자 한국어 단어 추출해 키워드로 분배
+      const titleWords = (v.title || '').match(/[가-힣]{2,8}/g) || [];
+      titleWords.forEach(w => addToMap(w, v));
+    } else {
+      addToMap(v.keyword || '', v);
+    }
+  }
+
+  /* 2) 점수 계산 (영상 수 ≥ 2개 이상만 유효 트렌드로 인정)
+   *
+   * 점수 공식 (0~100 정규화):
+   *   조회수       × 0.45  — 절대 규모
+   *   좋아요 × 8   × 0.20  — 적극 반응
+   *   댓글   × 20  × 0.10  — 화제성
+   *   신선도        × 0.10  — 지금 뜨고 있는지 (최근 3일 비율)
+   *   참여율        × 0.10  — 알고리즘 우호도
+   *   트렌딩 보너스 × 0.05  — 실제 트렌딩 차트 반영 가중치
+   */
+  const entries = Object.values(kwMap).filter(k => k.videos.length >= 2);
   for (const k of entries) {
     const freshPct = k.videos.filter(v =>
       Date.now() - new Date(v.publishedAt) < 3 * 86400000
@@ -33,14 +60,19 @@ export function analyzeAndRank(videos) {
       ? (k.totalLikes + k.totalComments) / k.totalViews
       : 0;
 
-    k.rawScore =
-      k.totalViews          * 0.50 +
-      k.totalLikes  * 8     * 0.20 +
-      k.totalComments * 20  * 0.10 +
-      freshPct * 1_000_000  * 0.10 +
-      engagementRate * 5_000_000 * 0.10;
+    // 트렌딩 차트에서 온 영상 비율 (source === 'trending')
+    const trendingPct = k.videos.filter(v => v.source === 'trending').length / k.videos.length;
 
-    k.videoCount = k.videos.length;
+    k.rawScore =
+      k.totalViews              * 0.45 +
+      k.totalLikes   * 8        * 0.20 +
+      k.totalComments * 20      * 0.10 +
+      freshPct * 1_000_000      * 0.10 +
+      engagementRate * 5_000_000 * 0.10 +
+      trendingPct * 2_000_000   * 0.05;   // 트렌딩 보너스
+
+    k.videoCount    = k.videos.length;
+    k.trendingCount = k.videos.filter(v => v.source === 'trending').length;
   }
 
   /* 3) 0~100 정규화 */
