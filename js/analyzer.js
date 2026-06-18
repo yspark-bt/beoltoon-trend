@@ -207,55 +207,28 @@ function getWeekLabel() {
   return `${d.getFullYear()}년 ${d.getMonth()+1}월 ${Math.ceil(d.getDate()/7)}주차`;
 }
 
+
 /**
  * 히어로 서브타이틀 생성
- * "A·B·C가 이번 주 쇼츠를 이끌었습니다" 형태
+ * 상위 트렌드명을 그대로 나열: "A·B·C·D·E가 이번 주 쇼츠를 이끌었습니다"
  */
 function buildHeroSubtitle(ranked) {
   if (!ranked || ranked.length === 0) return '이번 주 쇼츠 트렌드를 분석했습니다';
-  const groups = groupByCategory(ranked.slice(0, 8));
-  if (groups.length >= 2) {
-    return `${groups.join('·')}가 이번 주 쇼츠를 이끌었습니다`;
-  }
-  // 그룹핑 부족 시 상위 레이블 직접 사용
-  const labels = ranked.slice(0, 3).map(t => shortenLabel(t.label));
-  return `${[...new Set(labels)].slice(0, 3).join('·')}가 이번 주 쇼츠를 이끌었습니다`;
+
+  // 상위 5개 트렌드명을 그대로 가져오되, 너무 길면 핵심어만 짧게 다듬기
+  const names = ranked.slice(0, 5).map(t => trimLabel(t.label));
+
+  // 중복 제거
+  const unique = [...new Set(names)];
+
+  // "A·B·C·D·E가 이번 주 쇼츠를 이끌었습니다"
+  return `${unique.join('·')}가 이번 주 쇼츠를 이끌었습니다`;
 }
 
-/** 레이블을 짧은 핵심어로 압축 */
-function shortenLabel(label) {
-  return label
-    .replace(/\s*쇼츠$/, '').replace(/\s*챌린지$/, '챌린지')
-    .replace(/\s*리뷰$/, '리뷰').replace(/\s*레시피$/, '레시피')
-    .replace(/\s*ASMR$/i, 'ASMR').replace(/\s*DIY$/, 'DIY')
-    .replace(/\s*만들기$/, '만들기').trim();
-}
-
-/** 상위 트렌드를 카테고리로 묶어 대표 표현 반환 (최대 3개) */
-function groupByCategory(topRanked) {
-  const MAP = [
-    { keys: ['챌린지', '도전', '한호흡', '타이머', '커플', '벽버티기'], label: '도전형 챌린지' },
-    { keys: ['ASMR', '왁뿌', '말랑', '슬라임', '감각'],                 label: '감각형 ASMR' },
-    { keys: ['DIY', '만들기', '핸드메이드', '스퀴시', '쥬얼리'],        label: '감각형 DIY' },
-    { keys: ['패션', '메이크업', '뷰티', '네일', '헤어', '컬러'],        label: '뷰티·패션 정보' },
-    { keys: ['레시피', '요리', '비빔밥', '먹방'],                         label: '요리·먹방' },
-    { keys: ['리뷰', '내돈내산', '언박싱', '꿀템', '신상'],               label: '내돈내산 리뷰' },
-    { keys: ['운동', '홈트', '스트레칭'],                                  label: '운동·라이프' },
-    { keys: ['꿀팁', '정보', '알고리즘', '생활'],                          label: '생활 꿀팁' },
-    { keys: ['여름', '시즌'],                                               label: '여름 실용 정보' },
-    { keys: ['이슈', '월드컵', '축구', '화제'],                            label: '이슈형 콘텐츠' },
-  ];
-  const found = new Set();
-  const result = [];
-  for (const trend of topRanked) {
-    for (const cat of MAP) {
-      if (!found.has(cat.label) && cat.keys.some(k => trend.label.includes(k))) {
-        found.add(cat.label);
-        result.push(cat.label);
-        break;
-      }
-    }
-    if (result.length >= 3) break;
-  }
-  return result;
+/** 레이블 공백 및 '쇼츠' 접미어만 제거, 나머지는 원본 그대로 */
+function trimLabel(label) {
+  return (label || '')
+    .replace(/\s*쇼츠$/, '')   // 끝의 '쇼츠' 제거
+    .replace(/\s+/g, ' ')      // 연속 공백 정리
+    .trim();
 }
