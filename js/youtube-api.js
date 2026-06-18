@@ -19,22 +19,30 @@
 const YT_BASE = 'https://www.googleapis.com/youtube/v3';
 
 /* ─────────────────────────────────────────────────────────
-   수집용 검색 쿼리 세트
-   — 특정 키워드 없이 카테고리·시간 필터만으로 인기 Shorts 수집
-   — 역추출의 재료가 될 '다양한 실제 인기 영상' 확보가 목적
+   수집용 검색 쿼리 세트 (카테고리 완전 중립)
+   
+   설계 원칙:
+   - 특정 콘텐츠 카테고리(챌린지·먹방 등)를 사전에 지정하지 않음
+   - 시간대 분산: 한국 시청자가 많이 보는 시간대(오전·오후·저녁)별로
+     최근 업로드된 Shorts를 수집해 시간 편향 최소화
+   - 쿼리 자체가 결과를 유도하지 않도록 '#Shorts'만 사용
+   - 정렬 방식을 달리해 다양한 영상 확보
+     (viewCount: 조회수순 / relevance: 관련도순 / date: 최신순)
 ───────────────────────────────────────────────────────── */
 const SEED_QUERIES = [
-  // 카테고리 없이 순수 인기순 Shorts (가장 광범위)
-  { q: '#Shorts',         label: 'general'  },
-  { q: '쇼츠',            label: 'general2' },
-  // 주요 콘텐츠 카테고리 (넓게 커버)
-  { q: '챌린지 Shorts',   label: 'challenge' },
-  { q: '먹방 Shorts',     label: 'food'      },
-  { q: '일상 Shorts',     label: 'daily'     },
-  { q: '뷰티 Shorts',     label: 'beauty'    },
-  { q: '운동 Shorts',     label: 'fitness'   },
-  { q: '정보 Shorts',     label: 'info'      },
-  { q: 'ASMR Shorts',    label: 'asmr'      },
+  // 조회수순 — 이번 주 가장 많이 본 Shorts
+  { q: '#Shorts', order: 'viewCount', after: 7,  label: 'top_7d'   },
+  { q: '#Shorts', order: 'viewCount', after: 3,  label: 'top_3d'   },
+  { q: '#Shorts', order: 'viewCount', after: 1,  label: 'top_1d'   },
+  // 관련도순 — YouTube 알고리즘이 한국에서 노출 중인 Shorts
+  { q: '#Shorts', order: 'relevance', after: 7,  label: 'rel_7d'   },
+  { q: '#Shorts', order: 'relevance', after: 3,  label: 'rel_3d'   },
+  // 최신순 — 방금 올라온 Shorts (신규 트렌드 감지)
+  { q: '#Shorts', order: 'date',      after: 2,  label: 'new_2d'   },
+  { q: '#Shorts', order: 'date',      after: 1,  label: 'new_1d'   },
+  // 한국어 영상 보완 수집
+  { q: '쇼츠',    order: 'viewCount', after: 7,  label: 'ko_top'   },
+  { q: '쇼츠',    order: 'relevance', after: 3,  label: 'ko_rel'   },
 ];
 
 /* ─────────────────────────────────────────────────────────
@@ -111,15 +119,18 @@ export async function fetchTrendData(apiKey, onProgress = () => {}) {
 }
 
 /* ═══════════════════════════════════════════════════════
-   STEP 1 — 카테고리별 인기 Shorts 수집
-   search.list + order=viewCount + publishedAfter 7일
+   STEP 1 — 카테고리 중립 인기 Shorts 수집
+   - regionCode: KR 고정 (한국 기준 영상만)
+   - relevanceLanguage: ko (한국어 우선)
+   - 쿼리별 order, after 개별 적용
 ═══════════════════════════════════════════════════════ */
 async function fetchPopularShorts(apiKey, onProgress) {
-  const after = new Date(Date.now() - 7 * 86400000).toISOString();
   const results = [];
 
   for (let i = 0; i < SEED_QUERIES.length; i++) {
-    const { q, label } = SEED_QUERIES[i];
+    const { q, order, after: afterDays, label } = SEED_QUERIES[i];
+    const publishedAfter = new Date(Date.now() - afterDays * 86400000).toISOString();
+
     try {
       const data = await ytFetch(ytUrl('/search', {
         key: apiKey,
@@ -127,10 +138,10 @@ async function fetchPopularShorts(apiKey, onProgress) {
         q,
         type: 'video',
         videoDuration: 'short',
-        regionCode: 'KR',
-        relevanceLanguage: 'ko',
-        order: 'viewCount',        // 조회수 높은 순
-        publishedAfter: after,
+        regionCode: 'KR',           // 한국 기준 고정
+        relevanceLanguage: 'ko',    // 한국어 영상 우선
+        order,                      // 쿼리별 정렬 방식
+        publishedAfter,             // 쿼리별 기간
         maxResults: 50,
       }));
 
@@ -146,8 +157,7 @@ async function fetchPopularShorts(apiKey, onProgress) {
         });
       }
     } catch (e) {
-      // 개별 쿼리 실패는 무시하고 계속
-      console.warn(`[벌툰트렌드] ${q} 수집 실패:`, e.message);
+      console.warn(`[벌툰트렌드] ${label} 수집 실패:`, e.message);
     }
 
     onProgress(3 + Math.round((i + 1) / SEED_QUERIES.length * 30));
