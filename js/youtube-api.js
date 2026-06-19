@@ -191,7 +191,7 @@ async function fetchByCategories(apiKey, onProgress) {
             categoryId:   id,
             categoryName: name,
             source:       'category',
-            keyword:      name,   // 카테고리명을 키워드로 초기 설정
+            // keyword는 설정 안 함 — analyzer에서 제목 분석으로 세분화
           });
         }
 
