@@ -11,17 +11,19 @@
  */
 
 export function analyzeAndRank(videos) {
-  /* 1) 키워드 집계
-   * - 트렌딩 역추출 영상(source='trending')은 제목에서 키워드를 다시 뽑아 분배
-   * - 검색 영상은 검색 키워드로 집계
-   */
+  /* ─────────────────────────────────────────────────────
+   * 1) 키워드 집계
+   * source='category'  → 카테고리 인기 영상: 제목에서 세분화 추출
+   * source='search_kw' → 역추출 키워드 검색 영상: keyword 값 사용
+   * 그 외              → 제목에서 세분화 추출
+   * 핵심: 카테고리명이 트렌드명이 되지 않도록 전부 제목 기반 세분화
+   * ──────────────────────────────────────────────────── */
   const kwMap = {};
 
   function addToMap(key, video) {
     const k = normalizeKw(key);
-    if (!k) return;
+    if (!k || k.length < 2) return;
     if (!kwMap[k]) kwMap[k] = { label: k, videos: [], totalViews: 0, totalLikes: 0, totalComments: 0 };
-    // 동일 영상 중복 방지
     if (!kwMap[k].videos.find(e => e.videoId === video.videoId)) {
       kwMap[k].videos.push(video);
       kwMap[k].totalViews    += video.viewCount    || 0;
@@ -30,15 +32,33 @@ export function analyzeAndRank(videos) {
     }
   }
 
+  function extractFromTitle(title) {
+    if (!title) return [];
+    const tokens = [];
+    const koWords = title.match(/[\uAC00-\uD7A3]{2,8}/g) || [];
+    const enWords = title.match(/[a-zA-Z]{2,}/g) || [];
+    tokens.push(...koWords, ...enWords.map(w => w.toUpperCase()));
+    const cleaned = title.replace(/[^\uAC00-\uD7A3a-zA-Z\s]/g, ' ').replace(/\s+/g, ' ').trim();
+    const words = cleaned.split(' ').filter(w => w.length >= 2);
+    for (let i = 0; i < words.length - 1; i++) {
+      const bg = words[i] + ' ' + words[i+1];
+      const hasKo = /[\uAC00-\uD7A3]/.test(bg);
+      if (hasKo && bg.replace(/\s/g,'').length >= 4) tokens.push(bg);
+    }
+    return [...new Set(tokens)].filter(t => !TITLE_STOPWORDS.has(t.toLowerCase()));
+  }
+
   for (const v of videos) {
-    if (v.source === 'trending' || v.keyword === '_trending_') {
-      // 트렌딩 영상: 제목에서 2~8자 한국어 단어 추출해 키워드로 분배
-      const titleWords = (v.title || '').match(/[가-힣]{2,8}/g) || [];
-      titleWords.forEach(w => addToMap(w, v));
+    const src = v.source || '';
+    if (src === 'search_kw' && v.keyword && !isCategoryName(v.keyword)) {
+      // 역추출 키워드로 검색된 영상 → 검색 키워드 사용
+      addToMap(v.keyword, v);
     } else {
-      addToMap(v.keyword || '', v);
+      // 카테고리/보완/씨드 영상 → 제목에서 세분화 추출
+      extractFromTitle(v.title).forEach(kw => addToMap(kw, v));
     }
   }
+
 
   /* 2) 점수 계산 (영상 수 ≥ 2개 이상만 유효 트렌드로 인정)
    *
@@ -224,6 +244,31 @@ function savePrevRank(ranked) {
 }
 
 /* ─── 유틸 ─── */
+
+/* 제목에서 키워드 추출 시 걸러낼 불용어 */
+const TITLE_STOPWORDS = new Set([
+  // 조사·어미
+  '이','가','을','를','은','는','에','의','도','로','과','와','에서','으로','부터','까지',
+  // YouTube 공통
+  'shorts','short','쇼츠','youtube','yt','vlog','브이로그',
+  // 감탄·추임새
+  '진짜','완전','너무','헐','대박','미침','최고','레전드','레전',
+  // 변별력 낮은 동사·형용사
+  '해봤','해봄','했더니','하기','보기','먹기','귀엽','귀여운','예쁜','예뻐',
+  // 수식어
+  '나의','내가','제가','우리','같이','함께','혼자','직접','처음','마지막',
+  '요즘','인기','최신','최근','추천','이번','저번','오늘','한국',
+]);
+
+/* 카테고리명인지 확인 — 카테고리명은 keyword로 쓰지 않음 */
+const CATEGORY_NAMES = new Set([
+  '일상·블로그','코미디·유머','엔터·먹방','뷰티·패션·DIY',
+  '_seed_','_trending_',
+]);
+function isCategoryName(kw) {
+  return CATEGORY_NAMES.has(kw) || kw.startsWith('_');
+}
+
 function normalizeKw(kw) {
   return (kw || '').replace(/\s*쇼츠$/, '').replace(/\s*#Shorts$/i, '').trim();
 }
