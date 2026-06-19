@@ -34,18 +34,51 @@ export function analyzeAndRank(videos) {
 
   function extractFromTitle(title) {
     if (!title) return [];
+
+    // 이모지·특수문자 제거, 공백 정리
+    const cleaned = title
+      .replace(/[\u{1F300}-\u{1FFFF}]/gu, ' ')
+      .replace(/[!?❓❗⁉️‼️🔥💥✨⭐★☆♥♡]/g, ' ')
+      .replace(/[#@\[\](){}|\/<>^*+=%$&~`'"]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
     const tokens = [];
-    const koWords = title.match(/[\uAC00-\uD7A3]{2,8}/g) || [];
-    const enWords = title.match(/[a-zA-Z]{2,}/g) || [];
-    tokens.push(...koWords, ...enWords.map(w => w.toUpperCase()));
-    const cleaned = title.replace(/[^\uAC00-\uD7A3a-zA-Z\s]/g, ' ').replace(/\s+/g, ' ').trim();
-    const words = cleaned.split(' ').filter(w => w.length >= 2);
-    for (let i = 0; i < words.length - 1; i++) {
-      const bg = words[i] + ' ' + words[i+1];
-      const hasKo = /[\uAC00-\uD7A3]/.test(bg);
-      if (hasKo && bg.replace(/\s/g,'').length >= 4) tokens.push(bg);
+    const words = cleaned.split(' ').filter(w => w.length >= 1);
+
+    // 단어 단독 (2~8자 한국어, 2자 이상 영문) — 단독 단어는 불용어만 제거
+    for (const w of words) {
+      const hasKo = /[가-힣]/.test(w);
+      const hasEn = /[a-zA-Z]/.test(w);
+      const len   = w.length;
+      if (hasKo && len >= 2 && len <= 8 && !TITLE_STOPWORDS.has(w)) {
+        tokens.push(w);
+      } else if (hasEn && !hasKo && len >= 2 && !TITLE_STOPWORDS.has(w.toLowerCase())) {
+        tokens.push(w.toUpperCase());
+      }
     }
-    return [...new Set(tokens)].filter(t => !TITLE_STOPWORDS.has(t.toLowerCase()));
+
+    // 2단어 조합 (바이그램) — "왁뿌볼 ASMR", "여름 패션", "타이머 챌린지"
+    for (let i = 0; i < words.length - 1; i++) {
+      const a = words[i], b = words[i + 1];
+      if (TITLE_STOPWORDS.has(a) || TITLE_STOPWORDS.has(b)) continue;
+      const bg = a + ' ' + b;
+      const hasKo = /[가-힣]/.test(bg);
+      const len   = bg.replace(/\s/g, '').length;
+      if (hasKo && len >= 4 && len <= 14) tokens.push(bg);
+    }
+
+    // 3단어 조합 (트라이그램) — "타이머 댄스 챌린지", "왁뿌볼 얼려서 부수기"
+    for (let i = 0; i < words.length - 2; i++) {
+      const a = words[i], b = words[i + 1], cc = words[i + 2];
+      if (TITLE_STOPWORDS.has(a) || TITLE_STOPWORDS.has(cc)) continue;
+      const tg = a + ' ' + b + ' ' + cc;
+      const hasKo = /[가-힣]/.test(tg);
+      const len   = tg.replace(/\s/g, '').length;
+      if (hasKo && len >= 6 && len <= 18) tokens.push(tg);
+    }
+
+    return [...new Set(tokens)];
   }
 
   for (const v of videos) {
