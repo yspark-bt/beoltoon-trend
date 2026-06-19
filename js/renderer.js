@@ -40,8 +40,8 @@ function renderChips(keywords) {
   const el = document.getElementById('chips');
   if (!el) return;
 
-  // 역추출 키워드 최대 15개 표시
-  el.innerHTML = keywords.slice(0, 15).map(k =>
+  // 역추출 키워드 최대 5개 표시
+  el.innerHTML = keywords.slice(0, 5).map(k =>
     `<span class="chip">${esc(k)}</span>`
   ).join('');
 
