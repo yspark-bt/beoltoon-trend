@@ -1,58 +1,88 @@
 /**
- * youtube-api.js  v3.3
+ * youtube-api.js  v4.0
+ *
+ * 목적: 한국 유튜브 쇼츠의 실제 트렌드 파악
  *
  * 수집 흐름:
- *   STEP 1. 인기 Shorts 수집 (한국어 제목 필터)   → ~600 units
- *   STEP 2. 제목에서 키워드 역추출                 → 0 units
- *   STEP 3. 역추출 키워드로 추가 검색              → ~600 units
- *   STEP 4. 전체 통계 보강                        → ~20 units
+ *   STEP 1A. 카테고리별 인기 영상 수집 (videos.list)  → ~8 units
+ *            한국 Shorts 콘텐츠 주요 4개 카테고리
+ *            22(일상·블로그) / 23(코미디) / 24(엔터·먹방) / 26(뷰티·패션·DIY)
  *
- * 변경 이유 (v3.2 → v3.3):
- *   - order=viewCount + publishedAfter 조합 시 YouTube API 빈 결과 반환 문제
- *   - viewCount 없는 상태에서 extractKeywords 가중치 오동작
- *   - 수집 쿼리를 단순화하고 통계를 먼저 보강한 뒤 역추출
+ *   STEP 1B. '#Shorts' 검색으로 보완 수집             → ~200 units
+ *            카테고리에 잡히지 않는 트렌드 보완
+ *
+ *   STEP 2.  수집 영상 통계 보강 (viewCount 확보)     → ~10 units
+ *
+ *   STEP 3.  제목에서 키워드 역추출                   → 0 units
+ *            조회수 가중치 × 빈도 → 실제 인기 키워드 도출
+ *
+ *   STEP 4.  역추출 키워드로 추가 검색                → ~1,000 units
+ *            키워드별 최근 7일 Shorts 수집 → 점수 계산용
+ *
+ *   STEP 5.  전체 통계 최종 보강                      → ~20 units
+ *
+ * 총 쿼터: ~1,238 units / 1일 약 8회 분석 가능
+ * 한국 필터: regionCode=KR + relevanceLanguage=ko + 한국어 제목 확인
  */
 
 const YT_BASE = 'https://www.googleapis.com/youtube/v3';
 
-/* ─────────────────────────────────────────────
-   STEP 1 수집 쿼리
-   - order=relevance + 7일 기간으로 고정 (가장 안정적)
-   - publishedAfter 없이 쓰면 유효 결과 최다
-   - q는 '#Shorts'와 '쇼츠'만 — 카테고리 중립
-───────────────────────────────────────────── */
-const SEED_QUERIES = [
-  { q: '#Shorts 한국',  label: 'a' },
-  { q: '쇼츠',          label: 'b' },
-  { q: '#Shorts',       label: 'c' },
-  { q: '한국 쇼츠',     label: 'd' },
-  { q: '요즘 쇼츠',     label: 'e' },
-  { q: '인기 쇼츠',     label: 'f' },
+/* ═══════════════════════════════════════════════════
+   한국 Shorts 주요 카테고리 ID
+   videos.list?chart=mostPopular&videoCategoryId=N 으로
+   해당 카테고리 인기 영상 수집 가능
+   (2025.7 이후 mostPopular 변경됐지만 카테고리 지정 시 동작)
+═══════════════════════════════════════════════════ */
+const KR_SHORTS_CATEGORIES = [
+  { id: '22', name: '일상·블로그'   },  // People & Blogs — 일상·브이로그·챌린지
+  { id: '23', name: '코미디·유머'   },  // Comedy — 유머·반응·챌린지
+  { id: '24', name: '엔터·먹방'     },  // Entertainment — 먹방·예능·리뷰
+  { id: '26', name: '뷰티·패션·DIY' },  // Howto & Style — 메이크업·패션·만들기
 ];
 
-/* ─────────────────────────────────────────────
-   불용어
-───────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════
+   보완 검색 쿼리 (카테고리에 안 잡히는 영역 커버)
+═══════════════════════════════════════════════════ */
+const SUPPLEMENT_QUERIES = [
+  '쇼츠',       // 순수 한국어 쇼츠 검색
+  '#Shorts',    // 해시태그 기반 폭넓은 수집
+  'ASMR 쇼츠',  // ASMR은 카테고리 분류 불명확
+];
+
+/* ═══════════════════════════════════════════════════
+   불용어 — 트렌드 식별에 의미 없는 단어
+═══════════════════════════════════════════════════ */
 const STOPWORDS = new Set([
+  // 조사
   '이','가','을','를','은','는','에','의','도','로','과','와','에서','으로','부터','까지',
-  'shorts','short','쇼츠','유튜브','youtube','yt','한국',
+  // YouTube 공통
+  'shorts','short','쇼츠','유튜브','youtube','yt',
   'vlog','브이로그','ep','part','ver','version','편','회','번',
+  // 감탄·추임새
   '진짜','완전','너무','ㄷㄷ','ㄹㅇ','ㅋㅋ','ㅎㅎ','wow','omg','ㅠㅠ','ㅜㅜ','헐','대박',
+  // 변별력 낮은 수식어
   '최고','미침','미쳤','레전드','레전','신기','귀엽','귀여운','예쁜','예뻐',
   '해봤','해봄','했더니','해보기','먹기','하기','보기',
   '나의','내가','제가','우리','같이','함께','혼자','직접','처음','마지막',
-  '요즘','인기','최신','최근','추천','이번','저번','오늘',
+  '요즘','인기','최신','최근','추천','이번','저번','오늘','한국',
 ]);
 
-/* ═══════════════════════════════════════════
-   메인
-═══════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════
+   메인 수집 함수
+═══════════════════════════════════════════════════ */
 export async function fetchTrendData(apiKey, onProgress = () => {}) {
 
-  // STEP 1 — 인기 Shorts 수집 ─────────────────
+  // ── STEP 1A: 카테고리별 인기 영상 수집 ──────────────
   onProgress(3);
-  const rawVideos = await fetchPopularShorts(apiKey, onProgress);
-  onProgress(30);
+  const categoryVideos = await fetchByCategories(apiKey, onProgress);
+  onProgress(22);
+
+  // ── STEP 1B: 검색으로 보완 수집 ─────────────────────
+  const supplementVideos = await fetchBySearch(apiKey, onProgress);
+  onProgress(36);
+
+  // 합산 + 중복 제거
+  const rawVideos = devidById([...categoryVideos, ...supplementVideos]);
 
   if (rawVideos.length === 0) {
     throw new Error(
@@ -61,67 +91,137 @@ export async function fetchTrendData(apiKey, onProgress = () => {}) {
     );
   }
 
-  // STEP 1.5 — 수집 영상 통계 먼저 보강 (역추출 가중치에 활용) ─
-  onProgress(32);
-  const seedEnriched = await enrichStats(apiKey, rawVideos, p =>
-    onProgress(32 + Math.round(p * 0.15))
+  // ── STEP 2: 통계 보강 (역추출 가중치용) ─────────────
+  onProgress(38);
+  const seedEnriched = await enrichStats(
+    apiKey, rawVideos,
+    p => onProgress(38 + Math.round(p * 0.15))
   );
-  onProgress(47);
+  onProgress(53);
 
-  // STEP 2 — 키워드 역추출 ───────────────────────
+  // ── STEP 3: 키워드 역추출 ────────────────────────────
   const keywords = extractKeywords(seedEnriched);
-  onProgress(50);
+  onProgress(56);
 
   if (keywords.length === 0) {
-    // 역추출 실패 시 수집된 영상만으로 분석 (검색 추가 없이)
-    console.warn('[벌툰트렌드] 키워드 역추출 실패 — 수집 영상으로만 분석');
+    // 역추출 실패 시 수집 영상만으로 분석 진행
+    console.warn('[벌툰트렌드] 역추출 실패 → 수집 영상만으로 분석');
     return seedEnriched;
   }
 
-  // STEP 3 — 역추출 키워드로 추가 검색 ──────────
-  const topKws = keywords.slice(0, 12);
+  // ── STEP 4: 역추출 키워드로 추가 검색 ───────────────
+  const topKws = keywords.slice(0, 20);
   const searchedVideos = [];
   const errs = [];
 
   for (let i = 0; i < topKws.length; i++) {
     try {
-      const vs = await searchShorts(apiKey, topKws[i]);
+      const vs = await searchByKeyword(apiKey, topKws[i]);
       vs.forEach(v => searchedVideos.push({ ...v, keyword: topKws[i] }));
     } catch (e) {
+      // 쿼터 초과·인증 오류는 즉시 throw
+      if (e.message.includes('쿼터') || e.message.includes('API Key')) throw e;
       errs.push(e.message);
     }
-    onProgress(50 + Math.round((i + 1) / topKws.length * 25));
+    onProgress(56 + Math.round((i + 1) / topKws.length * 28));
     await sleep(120);
   }
 
-  // 오류가 API 인증 오류면 즉시 throw
-  if (errs.length && searchedVideos.length === 0) throw new Error(errs[0]);
-
-  // STEP 4 — 전체 합산 후 통계 보강 ─────────────
-  seedEnriched.forEach(v => { if (!v.keyword) v.keyword = v.seedLabel || '_seed_'; });
+  // ── STEP 5: 전체 합산 + 최종 통계 보강 ──────────────
+  seedEnriched.forEach(v => {
+    if (!v.keyword) v.keyword = v.categoryName || '_seed_';
+  });
   const combined = devidById([...seedEnriched, ...searchedVideos]);
-  onProgress(76);
+  onProgress(85);
 
-  const enriched = await enrichStats(apiKey, combined, p =>
-    onProgress(76 + Math.round(p * 0.20))
+  const enriched = await enrichStats(
+    apiKey, combined,
+    p => onProgress(85 + Math.round(p * 0.12))
   );
   onProgress(97);
 
   return enriched;
 }
 
-/* ═══════════════════════════════════════════
-   STEP 1 — 인기 Shorts 수집
-   regionCode=KR, relevanceLanguage=ko 고정
-   order=relevance (가장 안정적으로 결과 반환)
-   한국어 제목 포함 영상만 반환
-═══════════════════════════════════════════ */
-async function fetchPopularShorts(apiKey, onProgress) {
+/* ═══════════════════════════════════════════════════
+   STEP 1A — 카테고리별 인기 영상 수집
+   videos.list?chart=mostPopular&videoCategoryId=N
+   → Shorts 길이 필터 + 한국어 제목 필터
+═══════════════════════════════════════════════════ */
+async function fetchByCategories(apiKey, onProgress) {
+  const results = [];
+
+  for (let i = 0; i < KR_SHORTS_CATEGORIES.length; i++) {
+    const { id, name } = KR_SHORTS_CATEGORIES[i];
+    let pageToken = null;
+
+    // 카테고리당 최대 100개 (2페이지)
+    for (let page = 0; page < 2; page++) {
+      try {
+        const params = {
+          key: apiKey,
+          part: 'snippet,statistics,contentDetails',
+          chart: 'mostPopular',
+          regionCode: 'KR',
+          videoCategoryId: id,
+          maxResults: 50,
+        };
+        if (pageToken) params.pageToken = pageToken;
+
+        const data = await ytFetch(ytUrl('/videos', params));
+
+        for (const it of (data.items || [])) {
+          // Shorts 길이 필터
+          if (!isShorts(it.contentDetails?.duration)) continue;
+          // 한국어 제목 필터
+          const title = it.snippet.title || '';
+          if (!hasKorean(title)) continue;
+
+          results.push({
+            videoId:      it.id,
+            title,
+            channelTitle: it.snippet.channelTitle,
+            publishedAt:  it.snippet.publishedAt,
+            thumbnail:    it.snippet.thumbnails?.medium?.url || '',
+            tags:         it.snippet.tags || [],
+            viewCount:    parseInt(it.statistics?.viewCount    || 0),
+            likeCount:    parseInt(it.statistics?.likeCount    || 0),
+            commentCount: parseInt(it.statistics?.commentCount || 0),
+            duration:     it.contentDetails?.duration || '',
+            categoryId:   id,
+            categoryName: name,
+            source:       'category',
+            keyword:      name,   // 카테고리명을 키워드로 초기 설정
+          });
+        }
+
+        pageToken = data.nextPageToken;
+        if (!pageToken) break;
+        await sleep(80);
+
+      } catch (e) {
+        console.warn(`[벌툰트렌드] 카테고리 ${name}(${id}) 실패:`, e.message);
+        break;
+      }
+    }
+
+    onProgress(3 + Math.round((i + 1) / KR_SHORTS_CATEGORIES.length * 17));
+    await sleep(100);
+  }
+
+  return results;
+}
+
+/* ═══════════════════════════════════════════════════
+   STEP 1B — 검색으로 보완 수집
+   카테고리 미분류 트렌드 (ASMR 등) 커버
+═══════════════════════════════════════════════════ */
+async function fetchBySearch(apiKey, onProgress) {
   const after7d = new Date(Date.now() - 7 * 86400000).toISOString();
   const results = [];
 
-  for (let i = 0; i < SEED_QUERIES.length; i++) {
-    const { q, label } = SEED_QUERIES[i];
+  for (let i = 0; i < SUPPLEMENT_QUERIES.length; i++) {
+    const q = SUPPLEMENT_QUERIES[i];
     try {
       const data = await ytFetch(ytUrl('/search', {
         key: apiKey,
@@ -138,7 +238,6 @@ async function fetchPopularShorts(apiKey, onProgress) {
 
       for (const it of (data.items || [])) {
         const title = it.snippet.title || '';
-        // 한국어 제목 영상만 수집
         if (!hasKorean(title)) continue;
         results.push({
           videoId:      it.id.videoId,
@@ -146,34 +245,30 @@ async function fetchPopularShorts(apiKey, onProgress) {
           channelTitle: it.snippet.channelTitle,
           publishedAt:  it.snippet.publishedAt,
           thumbnail:    it.snippet.thumbnails?.medium?.url || '',
-          seedLabel:    label,
-          source:       'seed',
+          source:       'search_supplement',
         });
       }
     } catch (e) {
-      console.warn(`[벌툰트렌드] seed[${label}] 실패:`, e.message);
+      console.warn(`[벌툰트렌드] 보완검색 "${q}" 실패:`, e.message);
     }
 
-    onProgress(3 + Math.round((i + 1) / SEED_QUERIES.length * 25));
+    onProgress(22 + Math.round((i + 1) / SUPPLEMENT_QUERIES.length * 12));
     await sleep(120);
   }
 
-  // videoId 중복 제거
-  return devidById(results);
+  return results;
 }
 
-/* ═══════════════════════════════════════════
-   STEP 2 — 제목에서 키워드 역추출
-   viewCount 기반 가중치 + 빈도순 정렬
-   최소 2개 이상 영상에 등장한 단어만 유효
-═══════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════
+   STEP 3 — 제목·태그에서 키워드 역추출
+   조회수 로그 가중치 × 등장 빈도 → 실제 인기 키워드
+═══════════════════════════════════════════════════ */
 function extractKeywords(videos) {
   if (!videos.length) return [];
 
   const freq = {};
 
   for (const v of videos) {
-    // 이 시점엔 viewCount 보강 완료
     const weight = Math.log10(Math.max(v.viewCount || 1000, 10));
     const tokens = [
       ...tokenize(v.title),
@@ -186,18 +281,17 @@ function extractKeywords(videos) {
     }
   }
 
-  // 최소 2개 이상 — 3개는 너무 엄격해서 낮춤
+  // 2개 이상 영상에 등장한 키워드만
   return Object.entries(freq)
     .filter(([, v]) => v.count >= 2)
     .sort((a, b) => b[1].score - a[1].score)
     .map(([kw]) => kw);
 }
 
-/* ═══════════════════════════════════════════
-   STEP 3 — 역추출 키워드로 Shorts 추가 검색
-   한국어 제목 영상만 포함
-═══════════════════════════════════════════ */
-async function searchShorts(apiKey, kw) {
+/* ═══════════════════════════════════════════════════
+   STEP 4 — 역추출 키워드로 Shorts 추가 검색
+═══════════════════════════════════════════════════ */
+async function searchByKeyword(apiKey, kw) {
   const after7d = new Date(Date.now() - 7 * 86400000).toISOString();
   const data = await ytFetch(ytUrl('/search', {
     key: apiKey,
@@ -219,25 +313,21 @@ async function searchShorts(apiKey, kw) {
       channelTitle: it.snippet.channelTitle,
       publishedAt:  it.snippet.publishedAt,
       thumbnail:    it.snippet.thumbnails?.medium?.url || '',
-      source:       'search',
+      source:       'search_kw',
     }));
 }
 
-/* ═══════════════════════════════════════════
-   STEP 4 — 통계 보강
-   이미 viewCount 있는 영상은 스킵
-   onProg: 0~100 콜백 (내부 진행률)
-═══════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════
+   통계 보강 — 미보유 영상만 배치 조회
+═══════════════════════════════════════════════════ */
 async function enrichStats(apiKey, videos, onProg = () => {}) {
   const map = {};
-  // 이미 통계 있는 영상은 맵에 등록
   videos.filter(v => v.viewCount !== undefined)
         .forEach(v => { map[v.videoId] = v; });
 
   const ids = [...new Set(
     videos.filter(v => v.viewCount === undefined).map(v => v.videoId)
   )];
-
   if (ids.length === 0) { onProg(100); return videos; }
 
   const batches = chunk(ids, 50);
@@ -265,9 +355,9 @@ async function enrichStats(apiKey, videos, onProg = () => {}) {
     .filter(v => isShorts(v.duration));
 }
 
-/* ═══════════════════════════════════════════
-   유틸
-═══════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════
+   공통 유틸
+═══════════════════════════════════════════════════ */
 function tokenize(text) {
   if (!text) return [];
   const clean = text
@@ -284,14 +374,15 @@ function tokenize(text) {
   for (const w of [...koWords, ...enWords]) {
     if (!STOPWORDS.has(w.toLowerCase()) && !STOPWORDS.has(w)) tokens.push(w);
   }
-  // 바이그램
+  // 바이그램 (2단어 조합)
   const words = clean.split(/\s+/).filter(Boolean);
   for (let i = 0; i < words.length - 1; i++) {
-    const a = words[i], b = words[i+1];
+    const a = words[i], b = words[i + 1];
     const bg = `${a} ${b}`;
-    const len = bg.replace(/\s/g,'').length;
+    const len = bg.replace(/\s/g, '').length;
     if (/[가-힣]/.test(bg) && len >= 4 && len <= 14
-        && !STOPWORDS.has(a.toLowerCase()) && !STOPWORDS.has(b.toLowerCase())) {
+        && !STOPWORDS.has(a.toLowerCase())
+        && !STOPWORDS.has(b.toLowerCase())) {
       tokens.push(bg);
     }
   }
