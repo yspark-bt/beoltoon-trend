@@ -1,4 +1,4 @@
-# 🍯 벌툰 Shorts 트렌드 리포트
+# 🍯 챌린지 유행 Shorts 트렌드 리포트
 
 YouTube Data API v3를 이용해 이번 주 한국 YouTube Shorts 트렌드를 실시간 분석하는 정적 웹사이트입니다.  
 **GitHub Pages**에서 바로 호스팅되며, 별도 서버·백엔드 없이 브라우저만으로 동작합니다.
