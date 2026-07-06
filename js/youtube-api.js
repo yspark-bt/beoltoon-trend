@@ -34,19 +34,24 @@ const YT_BASE = 'https://www.googleapis.com/youtube/v3';
    (2025.7 이후 mostPopular 변경됐지만 카테고리 지정 시 동작)
 ═══════════════════════════════════════════════════ */
 const KR_SHORTS_CATEGORIES = [
-  { id: '22', name: '일상·블로그'   },  // People & Blogs — 일상·브이로그·챌린지
-  { id: '23', name: '코미디·유머'   },  // Comedy — 유머·반응·챌린지
-  { id: '24', name: '엔터·먹방'     },  // Entertainment — 먹방·예능·리뷰
-  { id: '26', name: '뷰티·패션·DIY' },  // Howto & Style — 메이크업·패션·만들기
+  { id: '22', name: '일상·챌린지' },  // People & Blogs — 일상·브이로그·챌린지 유행 중심
+  { id: '23', name: '코미디·유머' },  // Comedy — 유머·밈·챌린지 반응 중심
 ];
 
 /* ═══════════════════════════════════════════════════
    보완 검색 쿼리 (카테고리에 안 잡히는 영역 커버)
 ═══════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════
+   챌린지·유행 전용 검색 쿼리
+   — 제목에 "챌린지" 또는 "유행"이 포함된 한국 Shorts만 수집
+═══════════════════════════════════════════════════ */
 const SUPPLEMENT_QUERIES = [
-  '쇼츠',       // 순수 한국어 쇼츠 검색
-  '#Shorts',    // 해시태그 기반 폭넓은 수집
-  'ASMR 쇼츠',  // ASMR은 카테고리 분류 불명확
+  '챌린지 쇼츠',       // 챌린지 직접 검색
+  '챌린지',            // 해시태그 없이도 챌린지 영상 수집
+  '유행 쇼츠',         // 유행 직접 검색
+  '요즘 유행',         // "요즘 유행하는" 패턴
+  '요즘 핫한 챌린지',  // 핫한 챌린지 패턴
+  '유행 챌린지',       // 두 키워드 조합
 ];
 
 /* ═══════════════════════════════════════════════════
@@ -64,7 +69,7 @@ const STOPWORDS = new Set([
   '최고','미침','미쳤','레전드','레전','신기','귀엽','귀여운','예쁜','예뻐',
   '해봤','해봄','했더니','해보기','먹기','하기','보기',
   '나의','내가','제가','우리','같이','함께','혼자','직접','처음','마지막',
-  '요즘','인기','최신','최근','추천','이번','저번','오늘','한국',
+  '인기','최신','최근','추천','이번','저번','오늘','한국',
 ]);
 
 /* ═══════════════════════════════════════════════════
@@ -176,6 +181,8 @@ async function fetchByCategories(apiKey, onProgress) {
           // 한국어 제목 필터
           const title = it.snippet.title || '';
           if (!hasKorean(title)) continue;
+          // 챌린지·유행 관련 영상 필터
+          if (!isTrendVideo(title)) continue;
 
           results.push({
             videoId:      it.id,
@@ -239,6 +246,8 @@ async function fetchBySearch(apiKey, onProgress) {
       for (const it of (data.items || [])) {
         const title = it.snippet.title || '';
         if (!hasKorean(title)) continue;
+        // 챌린지·유행 관련 영상만 수집
+        if (!isTrendVideo(title)) continue;
         results.push({
           videoId:      it.id.videoId,
           title,
@@ -307,6 +316,7 @@ async function searchByKeyword(apiKey, kw) {
   }));
   return (data.items || [])
     .filter(it => hasKorean(it.snippet.title))
+    .filter(it => isTrendVideo(it.snippet.title))
     .map(it => ({
       videoId:      it.id.videoId,
       title:        it.snippet.title,
@@ -391,6 +401,20 @@ function tokenize(text) {
 
 function hasKorean(text) {
   return /[가-힣]/.test(text || '');
+}
+
+/**
+ * 챌린지·유행 관련 영상인지 확인
+ * — 제목에 아래 단어 중 하나 이상 포함 시 true
+ */
+const TREND_KEYWORDS = [
+  '챌린지', '유행', '핫한', '요즘', '트렌드', '밈',
+  'challenge', '떡상', '뜨는', '뜨고', '화제',
+];
+function isTrendVideo(title) {
+  if (!title) return false;
+  const lower = title.toLowerCase();
+  return TREND_KEYWORDS.some(kw => lower.includes(kw));
 }
 
 function ytUrl(path, p) {
