@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>벌툰 콘텐츠랩 | 가맹점 마케팅 숏폼 발굴</title>
+  <meta name="description" content="지금 뜨는 YouTube Shorts 중 벌툰 매장에서 그대로 따라 찍을 수 있는 콘텐츠만 골라 드립니다. 가맹점·본사 마케팅 담당자를 위한 촬영 가이드 자동 생성.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='28'>🍯</text></svg>">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- 헤더 -->
+<header class="site-header">
+  <div class="header-inner">
+    <a href="#" class="logo">
+      <div class="logo-ic">🍯</div>
+      <span class="logo-tx">벌툰<span>.콘텐츠랩</span></span>
+    </a>
+    <nav class="site-nav">
+      <a href="#top15" class="on">따라 찍기 TOP 15</a>
+      <a href="#pick">선점 아이템</a>
+      <a href="#action">촬영 가이드</a>
+    </nav>
+  </div>
+</header>
+
+<!-- 히어로 -->
+<section class="hero">
+  <div class="eyebrow"><div class="dot"></div>OTT · 웹툰·만화책 · 보드게임 인기 콘텐츠 분석</div>
+  <h1>OTT·웹툰·만화책<br><em>보드게임</em> 트렌드</h1>
+  <!-- 분석 후 자동 채워지는 핵심 요약 문장 -->
+  <p class="hero-tagline" id="heroTagline" style="display:none"></p>
+  <p class="hero-sub" id="heroSub">모든 OTT 플랫폼의 인기·신작·추천 드라마/영화, 웹툰·만화책 인기·신작·추천, 보드게임 인기·신작·추천을 조회수와 정확도 기준으로 분석합니다</p>
+  <!-- 분석 완료 후 역추출된 실제 키워드로 자동 교체됩니다 -->
+  <div class="chips" id="chips" style="opacity:0;transition:opacity .4s ease"></div>
+</section>
+
+<!-- 컨트롤 바 -->
+<div class="ctrl">
+  <div class="ctrl-in">
+    <button class="btn-gold" id="genBtn">📊 이번 주 콘텐츠 찾기</button>
+    <span class="saved-badge" id="savedBadge">✓ API Key 저장됨</span>
+    <div class="spacer"></div>
+    <button class="btn-out" id="clearBtn">🔄 새로 분석</button>
+    <button class="btn-ic" id="keyBtn" title="API Key 설정">🔑</button>
+  </div>
+</div>
+
+<!-- API Key 패널 -->
+<div class="key-panel" id="keyPanel">
+  <div class="key-in">
+    <p class="key-lbl">YouTube Data API v3 Key</p>
+    <div class="key-row">
+      <input type="password" class="key-input" id="keyInput" placeholder="AIzaSy..." autocomplete="off">
+      <button class="btn-gold" id="saveKeyBtn" style="padding:8px 14px;font-size:12px">저장</button>
+    </div>
+    <p class="key-hint">
+      키는 브라우저 localStorage에만 저장됩니다 (서버 전송 없음).<br>
+      발급: <a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud Console</a>
+      → YouTube Data API v3 활성화 필요 · 일일 무료 쿼터 10,000 units
+    </p>
+  </div>
+</div>
+
+<!-- 캐시 알림 -->
+<div class="cache-bar" id="cacheBar">
+  📦 이전 분석 결과 표시 중 — <strong id="cacheTime"></strong> 생성 · "새로 분석"으로 최신 콘텐츠를 가져오세요.
+</div>
+
+<!-- 메인 -->
+<main>
+  <!-- 에러 -->
+  <div class="err" id="errBox">
+    <p class="err-ttl">⚠️ 분석 오류</p>
+    <p class="err-body" id="errMsg"></p>
+  </div>
+
+  <!-- 로딩 -->
+  <div class="loading" id="loadBox">
+    <div class="spinner"></div>
+    <div class="prog-track"><div class="prog-fill" id="progBar"></div></div>
+    <div class="steps">
+      <div class="step" id="s0">📺 OTT 플랫폼별 인기·신작·추천 콘텐츠 검색 중...</div>
+      <div class="step" id="s1">📚 웹툰·만화책 인기·신작·추천 검색 중...</div>
+      <div class="step" id="s2">🎲 보드게임 인기·신작·추천 검색 중...</div>
+      <div class="step" id="s3">📊 조회수·정확도 기준 점수 계산 중...</div>
+      <div class="step" id="s4">✍️ 콘텐츠 분석 및 가이드 작성 중...</div>
+    </div>
+  </div>
+
+  <!-- 결과 -->
+  <div id="result" style="display:none">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:8px">
+      <span style="font-size:13px;font-weight:700;color:var(--dark)" id="weekLbl"></span>
+      <span style="font-size:11px;color:var(--t3)" id="genAt"></span>
+    </div>
+
+    <!-- 요약 -->
+    <div class="summary" id="summaryEl"></div>
+
+    <!-- TOP 15 아코디언 -->
+    <section class="sec" id="top15">
+      <div class="sec-hdr">
+        <div class="sec-num sn1">1</div>
+        <span class="sec-ttl">이번 주 따라 찍기 좋은 콘텐츠 TOP 15</span>
+      </div>
+      <p class="sec-sub">항목을 클릭하면 원본 영상과 상세 분석이 바로 아래에 펼쳐집니다 · 조회수·정확도 기준 정렬</p>
+      <div id="tblBody"></div>
+    </section>
+
+    <!-- 선점 기회 -->
+    <section class="sec" id="pick">
+      <div class="sec-hdr">
+        <div class="sec-num sn3">2</div>
+        <span class="sec-ttl">아직 남들이 안 한 선점 아이템</span>
+      </div>
+      <p class="sec-sub">16~22위권 성장 초기 콘텐츠 — 다른 가맹점보다 먼저 시도하면 눈에 띌 확률이 높습니다</p>
+      <div class="picks-grid" id="pgridEl"></div>
+    </section>
+
+    <!-- 액션 아이템 -->
+    <section class="sec" id="action">
+      <div class="sec-hdr">
+        <div class="sec-num sn4">3</div>
+        <span class="sec-ttl">이번 주 촬영 가이드 TOP 3</span>
+      </div>
+      <p class="sec-sub">가장 따라 찍기 쉬운 상위 3개 콘텐츠의 단계별 매장 촬영법</p>
+      <div class="action-cards" id="xcardsEl"></div>
+    </section>
+  </div>
+
+  <!-- 빈 상태 -->
+  <div class="empty" id="emptyEl">
+    <div class="empty-ic">🎬</div>
+    <div class="empty-ttl">이번 주 매장에서 따라 찍을 콘텐츠를 찾아보세요</div>
+    <p class="empty-txt">벌툰 방문객이 좋아하는 만화책·웹툰·OTT·예능·데이트·보드게임 콘텐츠 중<br>매장에서 그대로 촬영 가능한 포맷만 골라서 보여드립니다.<br>🔑 버튼으로 API Key를 설정하고 시작하세요.</p>
+    <button class="btn-gold" onclick="document.getElementById('keyBtn').click()">🔑 API Key 설정하기</button>
+  </div>
+</main>
+
+<footer>
+  <div class="flogo">🍯 벌툰 콘텐츠랩</div>
+  <div class="flinks">
+    <a href="https://github.com/yspark-bt/beoltoon-trend" target="_blank">GitHub</a>
+    <a href="https://console.cloud.google.com/apis/credentials" target="_blank">API Key 발급</a>
+  </div>
+  <p class="fnote">가맹점·본사 마케팅팀을 위한 콘텐츠 발굴 도구 · 데이터는 브라우저에만 저장됩니다</p>
+</footer>
+
+<div class="toast" id="toastEl"></div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
